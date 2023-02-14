@@ -4,12 +4,14 @@ output: html_document
 date: "2023-02-10"
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE, echo=F}
 knitr::opts_chunk$set(echo = TRUE, message=F, error=F, warning=F)
 ```
+
 ```{r lib, echo=F}
 library(tidyverse)
 library(furrr)
+library(grid)
 library(gridExtra)
 ```
 Objectives:  
@@ -22,19 +24,21 @@ Objectives:
 Loading .tsv files (one for each gate) with number of counts  for each promoter in each replicate 
 
 ```{r files}
-list.files(path="Amplicon-seq", pattern = "tsv$", full.names=T)
-list_gates<-map(list.files(path="Amplicon-Seq",pattern = "tsv$",full.names=T),
+list.files(path="../Amplicon-seq", pattern = "tsv$", full.names=T)
+plan(multisession, workers = 5)
+list_gates<-future_map(list.files(path="../Amplicon-Seq",pattern = "tsv$",full.names=T),
                 ~read_tsv(.x)%>%rowwise()%>%mutate(tot=sum(c_across(where(is.double)))))
+plan(sequential)
 names(list_gates)<-seq(1,5)
 ```
 
-Tha gates were selected like this by Fiszbein's lab:  
-![lib_gates]("library_gates.png")
+The gates were selected like this by Fiszbein's lab:  
+![lib_gates](img/lib_gates.png)
 
 ## Overview of counts between gates and replicates
 
-In the first figure we can see the distribution of the counts along each gate. 
-In the second one, replicates are considered. 
+In the first figure we can see the distribution of the counts along each gate.  
+In the second one, replicates are considered.  
 Cells from all gates were sequenced together, so the difference between gates should be explained mainly by the number of cells in each gate, and not by the library size. [This could be actually verified with data from the citometry]. 
 
 ```{r overview}
@@ -49,6 +53,8 @@ counts_per_rep%>%
   ggtitle("Number of counts per Gate")+
   scale_color_brewer(palette = "Set1", type="qual")+theme_bw()
 ```
+  
+  
 To establish whether replicates are coherent between them, the proportion of counts in each gate was assessed, observing high consistency (first Fig) [chi-square test could be done].  
 Moreover, the distribution of counts for each gate was plotted. We observe that the small difference between replicates, are mainly reduced when counts are normalized by the total counts in each library (second Fig).  
 
@@ -56,7 +62,7 @@ Moreover, the distribution of counts for each gate was plotted. We observe that 
 counts_per_rep%>%ggplot(aes(rep, counts, fill=Gate))+geom_col(position = "fill")+scale_fill_brewer(palette ="Set1",type="qual")+ theme_bw()+xlab("Replicate")+ggtitle("Gate distribution along replicates")
 ```
 
-```{r per_gate_rep_distribution}
+```{r per_gate_rep_distribution, fig.height=10}
 min_range_raw=c()
 max_range_raw=c()
 min_range_norm=c()
@@ -101,7 +107,7 @@ grid.arrange(grobs=c(raw_plots, norm_plots, list(shared_legend)),layout_matrix=m
 long_df<-map(seq(1,5),~list_gates[[.x]]%>%select(seqname, tot)%>%mutate(gate=as.factor(.x)))%>%list_rbind()
 
 long_df%>%
-  ggplot(aes(tot,fill=gate))+geom_density(alpha=0.5)+scale_x_log10()+scale_fill_brewer(palette="Set1", type="qual")+theme_bw()
+  ggplot(aes(tot,fill=gate))+geom_density(alpha=0.5)+scale_x_log10()+scale_fill_brewer(palette="Set1", type="qual")+theme_bw()+ggtitle("Counts per sequence")
 
 long_df%>%group_by(seqname)%>%summarise(suma=sum(tot))%>%ggplot(aes(suma))+geom_density(fill="#3FA0FF")+scale_x_log10()+
   ggtitle("Total counts per sequence")+ theme_bw()+xlab("Counts")
@@ -124,31 +130,58 @@ get_stats<-function(df){
 }
 
 
-plan(multisession, workers = 2)
+plan(multisession, workers = availableCores()-2)
 list_stats<-future_map(unique(long_df$seqname), ~long_df[long_df$seqname==.x,]%>%get_stats(), .progress = T)%>%list_rbind()
 kableExtra::kable(head(list_stats))
 ```
-
+  
+<br>
+<br>
+  
 Many measures for variability has been considered.  
+  
 The main thing to have in mind to consider one of them is that in this experiment, the values are discrete and ordered (between 1 and 5). Moreover, the number of them is very short.  
+  
 Therefore, Median Absolute Deviation (a robust measure for variability), cannot be considered. If used, probably all the promoters would have the same values (1, or at least 2).  
-Entropy (based on Information Theory) may be used, though it doesn't consider the order of the values. It can be normalized and adjusted to the number of bins considered. A major problem is that entropy does not allow for zeros in any bin. 
+  
+Entropy (based on Information Theory) may be used, though it doesn't consider the order of the values. It can be normalized and adjusted to the number of bins considered. A major problem is that entropy does not allow for zeros in any bin.  
+  
 Another version of entropy is extropy, which is similar to entropy, but some changes allowing the inclusion of bins with zero counts.On the other hand situation where just one bin concentrates all the counts, can't be calculated (although this cases are rather trivial).  
+  
+Concerning Standard Deviation, it could also be used (without any normalization). It would capture the ordered nature of the data. Moreover, variance can be weighted if the prior probabilities of a cell to be in one bin is different from the others.     
 
 
 ```{r stats_plots_density}
-list_stats%>%ggplot(aes(extropy))+geom_density()
-list_stats%>%ggplot(aes(floor(median)))+geom_histogram()
-list_stats%>%ggplot(aes(mean))+geom_density()
+grid.arrange(grobs=list(
+list_stats%>%ggplot(aes(extropy))+geom_density(fill="#3FA0FF", alpha=0.7)+theme_bw()+xlab("Extropy"),
+list_stats%>%ggplot(aes(sd))+geom_density(fill="#3FA0FF", alpha=0.7)+theme_bw()+xlab("Standard Deviation"),
+list_stats%>%ggplot(aes(floor(median)))+geom_histogram()+theme_bw()+xlab("Median bin"),
+list_stats%>%ggplot(aes(mean))+geom_density(fill="#3FA0FF", alpha=0.7)+theme_bw()+xlab("Mean bin")),
+nrow=2,ncol=2)
 ```
 
 ## Association between variables  
 
 ```{r assoction1}
 seqnames<-map(list_gates, ~.x%>%select(seqname, type))%>%list_rbind()%>%unique()
-list_stats<-left_join(list_stats, seqnames, by="seqname")
-list_stats%>%ggplot(aes(extropy, fill=as.factor(floor(median))))+geom_density(alpha=0.7)
-list_stats%>%ggplot(aes(floor(median), fill=type))+geom_histogram(position = "fill")
-list_stats%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)
-list_stats%>%filter(type%in%c("cancer-promoter-wt","cancer-promoter-mut"))%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)
+list_stats<-left_join(list_stats, seqnames, by="seqname")%>%mutate(median=as.factor(floor(median)))
+grid.arrange(grobs=list(list_stats%>%ggplot(aes(extropy, fill=median))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Extropy"),
+                               list_stats%>%ggplot(aes(sd, fill=median))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Standard Deviation")),ncol=2, top=grid::grid.text("Dispersion distribution for promoters with different median values"))
+list_stats%>%ggplot(aes(median, fill=type))+geom_histogram(position = "fill",stat="count")+theme_bw()+ggtitle("Gate proportions for different promoter types")
+grid.arrange(grobs=list(list_stats%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw(),
+                               list_stats%>%ggplot(aes(sd, fill=type))+geom_density(alpha=0.7)+theme_bw()),ncol=2, top=grid::grid.text("Dispersion distribution for different promoter types"))
+list_stats%>%filter(type%in%c("cancer-promoter-wt","cancer-promoter-mut"))%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Dispersion distribution for cancer-associated promoters")
 ```
+
+First. I compare the distribution of extropy and standard deviation for promoters with different medians. 
+
+
+Second. 
+
+
+Third
+
+
+Fourth
+
+

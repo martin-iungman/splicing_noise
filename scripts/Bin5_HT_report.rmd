@@ -4,8 +4,8 @@ output: html_document
 date: "2023-02-10"
 ---
 
-```{r setup, include=FALSE, echo=F}
-knitr::opts_chunk$set(echo = TRUE, message=F, error=F, warning=F)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, error=F, warning=F)
 ```
 
 ```{r lib, echo=F}
@@ -38,8 +38,8 @@ The gates were selected like this by Fiszbein's lab:
 ## Overview of counts between gates and replicates
 
 In the first figure we can see the distribution of the counts along each gate.  
-In the second one, replicates are considered.  
-Cells from all gates were sequenced together, so the difference between gates should be explained mainly by the number of cells in each gate, and not by the library size. [This could be actually verified with data from the citometry]. 
+In the second one, replicates are considered. These are technical replicates from the PCR and sequencing steps (they all come from the same sorting).   
+Cells from all gates were sequenced together, so the difference between gates should be explained mainly by the number of cells in each gate, and not by the library size. [This could be actually verified with data from the citometry].  
 
 ```{r overview}
 map(list_gates, ~sum(.x$tot))%>%list_c()%>%tibble(.name_repair = "universal")%>%rownames_to_column(var="Gates")%>%rename(counts=".")%>%
@@ -117,18 +117,24 @@ long_df%>%group_by(seqname)%>%summarise(suma=sum(tot))%>%ggplot(aes(suma))+geom_
 
 ```{r stats}
 get_stats<-function(df){
-  k<-nrow(df)
+  k<-length(df$tot[df$tot!=0])
   df$gate<-as.numeric(df$gate)
-  if(k!=5){
-    df<-bind_rows(df, data.frame(seqname=unique(df$seqname),tot= 1, gate=seq(1,5)[!seq(1,5)%in%df$gate]))
-  }
   a<-sum(df$tot)
-  vctr<-map(1:5, ~rep(df$gate[.x],times=df$tot[.x]))%>%list_c()
-  entropy=-1/log(5)*sum(df$tot/a*log(df$tot/a))
-  extropy=(-1/(4*log(5/4)))*sum((1-df$tot/a)*log(1-df$tot/a))
-  return(data.frame(seqname=unique(df$seqname),positive_gates=k,sum=a,mean=mean(vctr),median=median(vctr), sd=sd(vctr),mad=mad(vctr, constant=1), entropy=entropy, extropy=extropy))
+  vctr<-map(1:length(unique(df$gate)), ~rep(df$gate[.x],times=df$tot[.x]))%>%list_c()
+  if(k==1){extropy=0}else{
+      extropy=(-1/((k-1)*log(k/(k-1))))*sum((1-df$tot/a)*log(1-df$tot/a))
+  }
+  mean=mean(vctr)
+  median=median(vctr)
+  sd=sd(vctr)
+  mad=mad(vctr, constant=1)
+  sum=a
+  if(k!=5){
+    vctr<-c(vctr,seq(1,5)[!seq(1,5)%in%df$gate])
+    a=sum(a, 5-length(unique(df$gate)))}
+  entropy=(-1/log(5))*sum(df$tot/a*log(df$tot/a))
+  return(data.frame(seqname=unique(df$seqname),positive_gates=k,sum,mean,median, sd,mad, entropy, extropy))
 }
-
 
 plan(multisession, workers = availableCores()-2)
 list_stats<-future_map(unique(long_df$seqname), ~long_df[long_df$seqname==.x,]%>%get_stats(), .progress = T)%>%list_rbind()
@@ -144,9 +150,9 @@ The main thing to have in mind to consider one of them is that in this experimen
   
 Therefore, Median Absolute Deviation (a robust measure for variability), cannot be considered. If used, probably all the promoters would have the same values (1, or at least 2).  
   
-Entropy (based on Information Theory) may be used, though it doesn't consider the order of the values. It can be normalized and adjusted to the number of bins considered. A major problem is that entropy does not allow for zeros in any bin.  
+Entropy (based on Information Theory) may be used, though it doesn't consider the order of the values. It can be normalized and adjusted to the number of bins considered. A major problem is that entropy does not allow for zeros in any bin. To solve this problem, a pseudocount of 1 was added for bins with null counts. In light of the density plot of total counts per promoter, this small pseudocount shouldn't alter the results  
   
-Another version of entropy is extropy, which is similar to entropy, but some changes allowing the inclusion of bins with zero counts.On the other hand situation where just one bin concentrates all the counts, can't be calculated (although this cases are rather trivial).  
+Another version of entropy is extropy, which is similar to entropy, but some changes allowing the inclusion of bins with zero counts.On the other hand situation where just one bin concentrates all the counts, can't be calculated (although this cases are rather trivial).   
   
 Concerning Standard Deviation, it could also be used (without any normalization). It would capture the ordered nature of the data. Moreover, variance can be weighted if the prior probabilities of a cell to be in one bin is different from the others.     
 
@@ -162,26 +168,32 @@ nrow=2,ncol=2)
 
 ## Association between variables  
 
-```{r assoction1}
+First. I compare the distribution of extropy and standard deviation for promoters with different medians.  
+
+
+```{r assoction1, fig.width=10}
 seqnames<-map(list_gates, ~.x%>%select(seqname, type))%>%list_rbind()%>%unique()
 list_stats<-left_join(list_stats, seqnames, by="seqname")%>%mutate(median=as.factor(floor(median)))
 grid.arrange(grobs=list(list_stats%>%ggplot(aes(extropy, fill=median))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Extropy"),
                                list_stats%>%ggplot(aes(sd, fill=median))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Standard Deviation")),ncol=2, top=grid::grid.text("Dispersion distribution for promoters with different median values"))
-list_stats%>%ggplot(aes(median, fill=type))+geom_histogram(position = "fill",stat="count")+theme_bw()+ggtitle("Gate proportions for different promoter types")
-grid.arrange(grobs=list(list_stats%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw(),
-                               list_stats%>%ggplot(aes(sd, fill=type))+geom_density(alpha=0.7)+theme_bw()),ncol=2, top=grid::grid.text("Dispersion distribution for different promoter types"))
-list_stats%>%filter(type%in%c("cancer-promoter-wt","cancer-promoter-mut"))%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Dispersion distribution for cancer-associated promoters")
 ```
 
-First. I compare the distribution of extropy and standard deviation for promoters with different medians. 
-
-
 Second. 
+
+```{r}
+list_stats%>%ggplot(aes(median, fill=type))+geom_histogram(position = "fill",stat="count")+theme_bw()+ggtitle("Gate proportions for different promoter types")
+```
 
 
 Third
 
+```{r,fig.width=10}
+grid.arrange(grobs=list(list_stats%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw(),
+                               list_stats%>%ggplot(aes(sd, fill=type))+geom_density(alpha=0.7)+theme_bw()),ncol=2, top=grid::grid.text("Dispersion distribution for different promoter types"))
+```
 
-Fourth
+Fourth. Wilcoxon no significativo
 
-
+```{r}
+list_stats%>%filter(type%in%c("cancer-promoter-wt","cancer-promoter-mut"))%>%ggplot(aes(extropy, fill=type))+geom_density(alpha=0.7)+theme_bw()+ggtitle("Dispersion distribution for cancer-associated promoters")
+```

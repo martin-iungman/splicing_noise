@@ -118,6 +118,6 @@ list_stats%>%ggplot(aes(sum,entropy))+geom_point(size=0.7)+scale_x_log10()
 
 
 #get_stats(long_df%>%filter(seqname==list_stats$seqname[15198]))
-#long_df%>%filter(seqname==list_stats$seqname[12331])%>%ggplot(aes(gate,tot))+geom_col()
+long_df%>%filter(seqname==list_stats$seqname[12331])%>%ggplot(aes(gate,tot))+geom_col()
 
 

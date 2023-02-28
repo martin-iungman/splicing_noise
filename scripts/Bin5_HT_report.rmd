@@ -138,7 +138,7 @@ get_stats<-function(df){
 
 plan(multisession, workers = availableCores()-2)
 list_stats<-future_map(unique(long_df$seqname), ~long_df[long_df$seqname==.x,]%>%get_stats(), .progress = T)%>%list_rbind()
-kableExtra::kable(head(list_stats))
+kableExtra::kable(head(list_stats%>%mutate(across(where(is.numeric),round,3))))
 ```
   
 <br>
@@ -165,6 +165,11 @@ list_stats%>%ggplot(aes(floor(median)))+geom_histogram()+theme_bw()+xlab("Median
 list_stats%>%ggplot(aes(mean))+geom_density(fill="#3FA0FF", alpha=0.7)+theme_bw()+xlab("Mean bin")),
 nrow=2,ncol=2)
 ```
+
+#### Examples of diverse variability promoters
+
+
+
 
 ## Association between variables  
 
